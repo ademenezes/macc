@@ -10,15 +10,15 @@ library(gridExtra)
 
 
 # Extended Monte Carlo-enhanced MACC computation with adoption and energy uncertainty
-compute_costs_macc_uncertain_extended <- function(sel, r, subsidy_pct = 0, tariff_price = 0, 
+compute_costs_macc_uncertain_extended <- function(sel, r, subsidy_pct = 0, tariff_price = 0,
                                                   adoption_rate_mean = 0.3, adoption_rate_sd = 0.05,
                                                   energy_saving_sd_frac = 0.2,
                                                   n_sim = 1000) {
   s <- subsidy_pct / 100
-  
+
   results <- lapply(1:n_sim, function(i) {
     adoption_rate_sim <- rnorm(1, mean = adoption_rate_mean, sd = adoption_rate_sd)
-    
+
     sel %>%
       mutate(
         alpha       = alpha_pct / 100,
@@ -26,23 +26,23 @@ compute_costs_macc_uncertain_extended <- function(sel, r, subsidy_pct = 0, tarif
         c_ha_sim    = rnorm(n(), mean = c_ha, sd = 0.1 * c_ha),
         b_total_sim = rnorm(n(), mean = b_total, sd = 0.2 * b_total),
         es_mwh_sim  = rnorm(n(), mean = es_mwh, sd = energy_saving_sd_frac * es_mwh),
-        
+
         alpha_sim   = pmin(pmax(alpha * (adoption_rate_sim / adoption_rate_mean), 0), 1),
         C_tot       = coalesce(c_tot_in, a_pot * c_ha_sim * alpha_sim),
         C_sub       = (1 - s) * C_tot,
-        
+
         PV_benefit  = (b_total_sim / r) * (1 - (1 + r)^(-timeframe)),
         Net_Cost    = C_sub - PV_benefit,
         EAC         = (r * Net_Cost) / (1 - (1 + r)^(-timeframe)),
         MC          = EAC / WS,
-        
+
         scenario    = i
       ) %>%
       select(measure, WS, Net_Cost, MC, scenario)
   })
-  
+
   sim_df <- bind_rows(results)
-  
+
   sim_df %>%
     group_by(measure) %>%
     summarise(
@@ -112,8 +112,8 @@ compute_costs_macc <- function(sel, r, subsidy_pct = 0, tariff_price = 0) {
   horizon <- sel$timeframe[1]
   s       <- subsidy_pct / 100
   apply_subsidy <- s > 0
-  
-  
+
+
   sel %>%
     mutate(
       alpha     = alpha_pct / 100,
@@ -169,27 +169,27 @@ ui <- fluidPage(
       selectInput("level", "Level:", choices = c("Project/Farmer", "Project", "National/Project", "National")),
       checkboxGroupInput("measure", "Measure(s):", choices = NULL),
       helpText("Select country, level, and specific water-saving measures."),
-      
+
       hr(), h4("Policy Parameters"),
       sliderInput("subsidy", span("Subsidy (%):", title = "Cost covered by government or donors"), 0, 100, 0, 5),
-      numericInput("tariff", span("Water Tariff (USD/m³):", title = "Price of water per cubic meter"), 
+      numericInput("tariff", span("Water Tariff (USD/m³):", title = "Price of water per cubic meter"),
                    value = NULL, min = 0, step = 0.01),
       numericInput("discount_rate", span("Discount Rate (%):", title = "Discounts future costs/benefits to present value"), 3.5, 0, 10, 0.1),
-      
+
       hr(), h4("Adoption Curve"),
       numericInput("adoption_rate", span("Adoption Rate", title = "Speed of adoption over time"), 0.3, 0.01, 1, 0.01),
       numericInput("midpoint", span("Midpoint Year", title = "Year of 50% adoption"), 5, 1, 50, 1),
-      
+
       hr(), h4("Scenario Manager"),
       textInput("scenario_name", "Scenario Name:", "Scenario_1"),
       actionButton("save_scenario", "💾 Save Scenario"),
       selectInput("load_scenario", "Load Saved Scenario:", choices = NULL),
       actionButton("load_button", "📥 Load Selected Scenario"),
-      
+
       hr(),
       downloadButton("downloadData", "Download MACC CSV")
     ),
-    
+
     mainPanel(
       tabsetPanel(
         tabPanel("MACC",
@@ -221,7 +221,7 @@ ui <- fluidPage(
                  tags$p("This stacked bar chart shows the relative contribution of water, energy, and yield benefits to the total benefit for each selected measure. It highlights which benefit stream drives the economic value of each intervention."),
                  plotOutput("benefitCompositionProportional"),
                  plotOutput("benefitCompositionAbsolute")
-                 
+
         ),
         tabPanel("Documentation",
                  tags$p("Model overview and assumptions."),
@@ -231,17 +231,17 @@ ui <- fluidPage(
         tabPanel("Acknowledgments",
                  tags$h4("Acknowledgments"),
                  tags$p("We thank the contributors and partners who supported this work."),
-                 
+
                  tags$h5("Contributors"),
                  tags$ul(
                    tags$li("This application was developed by Ana De Menezes (ETC Economist) under the guidance of Julie Rozenberg (Senior Economist).")
                  ),
-                 
+
                  tags$h5("Funding & Partnerships"),
                  tags$ul(
                    tags$li("")
                  ),
-                 
+
                  tags$h5("Data & Assumptions"),
                  tags$ul(
                    tags$li("Model documentation: see the Documentation tab (PDF)"),
@@ -256,42 +256,42 @@ ui <- fluidPage(
 # Server
 server <- function(input, output, session) {
   saved_scenarios <- reactiveVal(list())
-  
+
   sel <- reactive({
     req(input$country, input$level, input$measure)
     df %>% filter(country == input$country, level == input$level, measure %in% input$measure)
   })
-  
+
   subsidy_pct <- reactive({
     req(input$subsidy)
     as.numeric(input$subsidy)
   })
-  
+
   tariff_val <- reactive({
     req(input$tariff)
     as.numeric(input$tariff)
   })
-  
+
   # Update your reactive MACC data functions to use these
   macc_df <- reactive({
     compute_costs_macc(sel(), input$discount_rate / 100, subsidy_pct(), tariff_val())
   })
-  
+
   macc_df_uncertain <- reactive({
     compute_costs_macc_uncertain_extended(sel(), input$discount_rate / 100, subsidy_pct(), tariff_val())
   })
-  
+
   observeEvent(input$country, {
     lvls <- df %>% filter(country == input$country) %>% pull(level) %>% unique()
     updateSelectInput(session, "level", choices = intersect(c("Project/Farmer", "Project", "National/Project", "National"), lvls))
   })
-  
+
   observeEvent(c(input$country, input$level), {
     req(input$country, input$level)
     ms <- df %>% filter(country == input$country, level == input$level) %>% pull(measure) %>% unique() %>% sort()
     updateCheckboxGroupInput(session, "measure", choices = ms, selected = ms)
   })
-  
+
   observeEvent(input$save_scenario, {
     new <- saved_scenarios()
     new[[input$scenario_name]] <- list(
@@ -307,7 +307,7 @@ server <- function(input, output, session) {
     saved_scenarios(new)
     updateSelectInput(session, "load_scenario", choices = names(new))
   })
-  
+
   observeEvent(input$load_button, {
     sel <- saved_scenarios()[[input$load_scenario]]
     if (!is.null(sel)) {
@@ -321,7 +321,7 @@ server <- function(input, output, session) {
       updateNumericInput(session, "discount_rate", value = sel$discount_rate)
     }
   })
-  
+
   observeEvent(sel(), {
     df_sel <- sel()
     if (nrow(df_sel) > 0) {
@@ -330,7 +330,7 @@ server <- function(input, output, session) {
       updateNumericInput(session, "tariff", value = avg_price)
     }
   })
-  
+
   output$mccPlot <- renderPlot({
     m <- macc_df()
     gap <- max(abs(m$MC), na.rm = TRUE) * 0.05
@@ -344,7 +344,7 @@ server <- function(input, output, session) {
       theme_minimal() +
       theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   })
-  
+
   output$mccTable <- renderDataTable({
     df_macc <- macc_df() %>%
       mutate(
@@ -355,7 +355,7 @@ server <- function(input, output, session) {
         P_eff = round(P_eff, 2),
         price_gap = round(price_gap, 3)
       )
-    
+
     if (subsidy_pct() > 0) {
       df_macc <- df_macc %>%
         mutate(C_sub = dollar(C_sub, accuracy = 1)) %>%
@@ -383,30 +383,30 @@ server <- function(input, output, session) {
           `Is Cost-Effective?` = is_cost_effective
         )
     }
-    
+
     datatable(df_macc, options = list(pageLength = 10, scrollX = TRUE))
   })
-  
+
   output$mccExplanation <- renderUI({
     df <- macc_df()
     req(nrow(df) > 0)
-    
+
     # Aggregates
     total_ws <- sum(df$WS, na.rm = TRUE)
     avg_mc   <- mean(df$MC, na.rm = TRUE)
     total_net_cost <- sum(df$Net_Cost, na.rm = TRUE)
     n_effective <- sum(df$is_cost_effective, na.rm = TRUE)
     n_total <- nrow(df)
-    
+
     subsidy <- input$subsidy
     tariff  <- input$tariff
-    
+
     HTML(sprintf(
       "<div style='margin-top:20px'>
     <h4>Interpretation of Results</h4>
     <p>This table presents a cost-effectiveness analysis of <b>%d</b> selected water-saving measures in <b>%s</b> at the <b>%s</b> level. The current scenario applies a <b>%d%% subsidy</b> and a <b>water tariff of %.2f USD/m³</b>.</p>
 
-    <p>Combined, these interventions are projected to save approximately <b>%s m³</b> of water. They yield an average marginal cost of <b>%.3f USD/m³</b>, and the overall net cost — defined as subsidized implementation cost minus present value of benefits — amounts to <b>%s</b>. A negative net cost implies that the benefits outweigh the costs, resulting in a net economic gain.</p> 
+    <p>Combined, these interventions are projected to save approximately <b>%s m³</b> of water. They yield an average marginal cost of <b>%.3f USD/m³</b>, and the overall net cost — defined as subsidized implementation cost minus present value of benefits — amounts to <b>%s</b>. A negative net cost implies that the benefits outweigh the costs, resulting in a net economic gain.</p>
 
     <p><b>%d out of %d</b> measures are cost-effective under these policy conditions, meaning their marginal cost is less than or equal to the effective water price benchmark of <b>%.2f USD/m³</b>.</p>
 
@@ -445,8 +445,8 @@ server <- function(input, output, session) {
       } else { "" }
     ))
   })
-  
-  
+
+
   output$energyPlot <- renderPlot({
     d <- sel()[1,]; hor <- d$timeframe
     area <- simulate_area(d$a_pot, input$adoption_rate, input$midpoint, hor, dt)
@@ -455,7 +455,7 @@ server <- function(input, output, session) {
       geom_line() + theme_minimal() +
       labs(title = "Energy Savings Over Time", x = "Year", y = "Energy Saved (MWh/year)")
   })
-  
+
   output$yieldPlot <- renderPlot({
     d <- sel()[1,]; hor <- d$timeframe
     area <- simulate_area(d$a_pot, input$adoption_rate, input$midpoint, hor, dt)
@@ -464,7 +464,7 @@ server <- function(input, output, session) {
       geom_line() + theme_minimal() +
       labs(title = "Yield Benefit Over Time", x = "Year", y = "Yield Benefit (USD/year)")
   })
-  
+
   output$totalBenefitPlot <- renderPlot({
     d <- sel()[1,]; hor <- d$timeframe
     area <- simulate_area(d$a_pot, input$adoption_rate, input$midpoint, hor, dt)
@@ -489,7 +489,7 @@ server <- function(input, output, session) {
                                    share_ws = "Water Saving",
                                    share_es = "Energy Saving",
                                    share_yi = "Yield Increase"))
-    
+
     ggplot(df_sel, aes(x = measure, y = proportion, fill = benefit_type)) +
       geom_bar(stat = "identity") +
       scale_y_continuous(labels = percent_format(accuracy = 1)) +
@@ -498,7 +498,7 @@ server <- function(input, output, session) {
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
-  
+
   output$benefitCompositionAbsolute <- renderPlot({
     df_sel <- sel() %>%
       select(measure, b_ws, b_es, b_yi) %>%
@@ -510,7 +510,7 @@ server <- function(input, output, session) {
                                    b_ws = "Water Saving",
                                    b_es = "Energy Saving",
                                    b_yi = "Yield Increase"))
-    
+
     ggplot(df_sel, aes(x = measure, y = value, fill = benefit_type)) +
       geom_bar(stat = "identity") +
       scale_y_continuous(labels = dollar_format(scale = 1e-6, suffix = "M")) +
@@ -519,9 +519,9 @@ server <- function(input, output, session) {
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
-  
-  
-  
+
+
+
   output$monteCarloPlot <- renderPlot({
     df_uncertain <- macc_df_uncertain()
     ggplot(df_uncertain, aes(x = reorder(measure, MC_median), y = MC_median)) +
@@ -531,8 +531,8 @@ server <- function(input, output, session) {
       labs(title = "Monte Carlo: Marginal Cost Ranges", x = "Measure", y = "Marginal Cost (USD/m³)") +
       theme_minimal()
   })
-  
-  
+
+
   output$monteCarloTable <- renderDataTable({
     macc_df_uncertain() %>%
       mutate(
@@ -547,9 +547,9 @@ server <- function(input, output, session) {
         `95th Percentile (USD/m³)` = MC_p95
       )
   }, options = list(pageLength = 10, scrollX = TRUE))
-  
-  
-  
+
+
+
   output$downloadData <- downloadHandler(
     filename = function() {
       d <- sel()[1,]
